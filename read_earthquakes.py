@@ -6,4 +6,9 @@ def load_earthquakes(filepath: str | Path) -> pd.DataFrame:
     """Load the earthquakes CSV file (semicolon-separated) and drop completely empty rows."""
     df = pd.read_csv(filepath, sep=";")
     df = df.dropna(how="all").reset_index(drop=True)
+    print(df.columns)
     return df
+
+df=load_earthquakes("data/earthquakes_filtered.csv")
+print(df.head())
+print("hello")
