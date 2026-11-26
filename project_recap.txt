@@ -1,0 +1,114 @@
+================================================================================
+RECAPITULATIF DU PROJET MACHINE LEARNING - ESILV (ML-2026)
+Sujet : Systeme d'alerte precoce sismique (Tsunami + Intensite ressentie)
+================================================================================
+
+1. PROBLEMATIQUE & BUSINESS CASE
+--------------------------------------------------------------------------------
+Titre (EN pour le rapport) :
+"Real-Time Seismic Early Warning: Joint Prediction of Tsunami Triggering and
+Felt Shaking Intensity from Immediate Earthquake Parameters"
+
+Contexte metier :
+Dans les 1 a 2 minutes qui suivent un seisme, les capteurs sismiques fournissent
+immediatement la localisation (Latitude, Longitude), la profondeur focale et la
+magnitude. Les centres d'alerte doivent rapidement repondre a deux besoins :
+  - Volet 1 (Alerte cotiere) : Le seisme va-t-il declencher un tsunami ?
+    -> Cout asymetrique : un Faux Negatif (tsunami manque) est critique.
+  - Volet 2 (Secours a terre, type ShakeMap) : Quelle intensite de secousses
+    (echelle de Mercalli, MMI Int) va etre ressentie en surface ?
+
+2. DATASET & DONNEES FILTREES
+--------------------------------------------------------------------------------
+- Source brute : Data/earthquakes.csv (4 424 lignes non vides x 38 colonnes)
+- Dataset filtre : Data/earthquakes_filtered.csv (2 344 lignes x 33 colonnes)
+  * Periode : 1950 a 2020 (donnees instrumentales modernes)
+  * Valeurs manquantes supprimees sur : Year, Latitude, Longitude,
+    Focal Depth (km), Mag
+  * Colonnes > 85% de valeurs manquantes supprimees
+
+3. VARIABLES CIBLES (y) & FEATURES (X)
+--------------------------------------------------------------------------------
+Cibles :
+  - Volet 1 (Classification binaire) : y_tsu = df["Tsu"].notna().astype(int)
+      * 2 344 lignes au total : 581 tsunamis (24,8%) vs 1 763 sans (75,2%)
+      * Signal physique : Mag mediane = 7.1 (avec tsunami) vs 5.8 (sans)
+  - Volet 2 (Regression / Ordinale) : y_mmi = df["MMI Int"] (echelle 2 a 12)
+      * 822 lignes renseignees (35,1%), mediane = 7.0, moyenne = 6.97
+
+Features AUTORISEES (connues immediatement a t + 2 min) :
+  - Latitude, Longitude, Focal Depth (km), Mag
+  - Optionnel : Mo, Dy, Hr (a verifier en EDA)
+  - Feature Engineering :
+      1. Coordonnees spheriques 3D (x, y, z) pour eviter la discontinuite
+         a +/-180 degres dans le Pacifique
+      2. Proxy d'energie sismique (10^(1.5 * Mag)) et ratio Mag / log1p(Depth)
+      3. Indicateur mer/terre et distance a la cote (ex. global-land-mask)
+      4. Historique local calcule UNIQUEMENT dans le fold d'entrainement
+
+Features STRICTEMENT INTERDITES en entree (DATA LEAKAGE !) :
+  - Tsu, MMI Int (cibles / mesurees apres coup)
+  - Deaths, Injuries, Damage ($Mil), Houses Destroyed, Houses Damaged
+  - Toutes les colonnes Total * et * Description
+
+4. PROTOCOLE DE VALIDATION & METRIQUES
+--------------------------------------------------------------------------------
+Split temporel (evite le leakage temporel) :
+  - Train : Year < 2012  -> 1 903 lignes (81,2%), 25,4% tsunamis
+  - Test  : Year >= 2012 ->   441 lignes (18,8%), 22,2% tsunamis
+  - Validation croisee sur le train : StratifiedKFold (et test de robustesse
+    spatiale via GroupKFold geographique)
+  - Tout preprocessing (imputation, scaling, SMOTE) DOIT etre dans un Pipeline
+    scikit-learn fitte uniquement sur le train/fold.
+
+Metriques :
+  - Volet 1 (Tsu - Classification desequilibree) :
+      * Principale : PR-AUC (Average Precision)
+      * Metier : F2-score & Recall apres optimisation du seuil de decision
+      * Fiabilite : Brier Score + courbe de calibration des probabilites
+  - Volet 2 (MMI Int - Regression) :
+      * RMSE, MAE, R2 + analyse des residus et intervalles de confiance
+
+5. FEUILLE DE ROUTE DES MODELES (STEPS 2 & 3)
+--------------------------------------------------------------------------------
+  1. Baseline :
+     - Tsu : DummyClassifier + LogisticRegression (class_weight="balanced")
+     - MMI : DummyRegressor + Ridge / LinearRegression
+  2. AutoML v0.1 (Modeles standards) :
+     - Decision Tree, Random Forest, SVM (RBF), KNN, Gradient Boosting
+     - Tuning hyperparametres (GridSearchCV / Optuna)
+  3. Amelioration v0.2 (Ensemble & Calibration) :
+     - Stacking / Soft Voting, CalibratedClassifierCV, optimisation du seuil
+     - Interpretabilite : SHAP values + analyse des erreurs (FN critiques)
+  4. Step 3 (Modele hors-cours + article scientifique) :
+     - Piste A : Multi-Task Neural Network (2 tetes : classification Tsu +
+       regression MMI avec perte masquee sur les NaN de MMI)
+     - Piste B : CatBoost / LightGBM avec Focal Loss (Lin et al., 2017) ou
+       TabNet (Arik & Pfister, 2021)
+
+6. REPARTITION EN 4 MODULES (CONTRIBUTIONS.md)
+--------------------------------------------------------------------------------
+  - Membre 1 : EDA, tests statistiques (Mann-Whitney, normalite), split temporel
+  - Membre 2 : Feature engineering spatial (3D, mer/terre) & Pipeline anti-leakage
+  - Membre 3 : Modelisation Volet 1 - Tsunami (v0.1, tuning, seuil cout-sensible)
+  - Membre 4 : Modelisation Volet 2 - Intensite (MMI Int), modele avance Step 3
+               (Multi-Task / Focal Loss), calibration & SHAP
+
+7. LIVRABLES OBLIGATOIRES & REGLES DE NOTATION (/20)
+--------------------------------------------------------------------------------
+Structure obligatoire du .zip Moodle (Group_XX_DS_Project.zip) :
+  - requirements.txt (versions figees / pinned)
+  - notebooks/ ou src/ (chemins relatifs)
+  - report/Report_Group_XX.pdf (EN ANGLAIS obligatoire, sinon note / 2 ;
+    +1 a +2 pts bonus si redige en LaTeX)
+  - ai_governance/
+      * CONTRIBUTIONS.md (qui possede quel module)
+      * PROMPT_LOG.md (4 a 6 prompts cles, min 1/etudiant)
+      * AI_AUDIT.md (>= 4 erreurs d'IA detectees et corrigees, min 1/etudiant)
+
+Attention aux penalites (Red Flags) :
+  - Data leakage non detecte : note technique plafonnee a 10/20
+  - Utilisation d'IA non documentee dans PROMPT_LOG.md : -4 pts
+  - Contribution individuelle manquante dans PROMPT_LOG ou AI_AUDIT : -2 pts
+  - Mauvaise structure du zip : -2 pts
+================================================================================
